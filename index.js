@@ -18,18 +18,7 @@ var networkAddress = function() {
 		}
 	}
 	return '127.0.0.1';
-};
-var normalizeAddress = function(address) {
-	address = address || networkAddress();
-
-	if (!(/\w+:\/\//.test(address))) {
-		address = 'json://'+address;
-	}
-	if (!(/:\d+$/.test(address))) {
-		address += ':'+PORT;
-	}
-	return address;
-};
+}();
 var listen = function(onsocket, callback) {
 	var onport = function(port) {
 		sockets.listen(port, onsocket, function(err) {
@@ -42,96 +31,149 @@ var listen = function(onsocket, callback) {
 	};
 	onport(PORT);
 };
+var normalizeAddress = function(address) {
+	address = address || networkAddress;
+
+	if (!(/\w+:\/\//.test(address))) {
+		address = 'json://'+address;
+	}
+	if (!(/:\d+$/.test(address))) {
+		address += ':'+PORT;
+	}
+	return address;
+};
+var addSocket = function(emitter, map, from, socket) {
+	if (map[from]) {
+		return;
+	}
+	map[from] = socket;
+
+	socket.on('close', function() {
+		delete map[from];
+		emitter.emit('disconnect', from);
+	});
+
+	emitter.emit('connect', from);
+};
+
+var createMultiplex = function(channel) {
+	var that = common.createEmitter();
+	var members = {};
+
+	that.joined = false;
+	that.channel = channel;
+
+	that.add = function(from, socket) {
+		addSocket(that, members, from, socket);
+	};
+	that.nodes = function() {
+		return Object.keys(members);	
+	};
+
+	return that;	
+};
 
 exports.connect = function(announce) {
-	var that = common.createEmitter();	
-	var pings = {};
-	var callbacks = {};
+	var that = common.createEmitter('that');
 	var members = {};
+	var channels = {};
+	var callbacks = {};
 	var address;
 
 	announce = normalizeAddress(announce);
 
+	var onaddress = common.future();
+
+	var syncMultiplex = function(socket) {
+		socket.send({type:'multiplex', from:address, channels:Object.keys(channels)});	
+	};
+
+	var onmultiplex = function(channel) {
+		return channels[channel] = channels[channel] || createMultiplex(channel);		
+	};
 	var onconnect = function(from, socket) {
-		members[from] = socket;
+		addSocket(that, members, from, socket);
 
-		socket.on('close', function() {
-			delete members[from];
-			that.emit('disconnect', from);
-		});
-
-		that.emit('connect', from);		
+		socket.send({type:'list', members:that.nodes()});
+		syncMultiplex(socket);
 
 		return socket;
 	};
 	var onsocket = function(socket) {
-		socket.on('message', function(message) {
-			var id = message.id; // used alot
+		var types = {};
 
-			if (message.method === 'connect') {
-				onconnect(message.from, socket);
-
-				socket.send({method:'members', members:list()});
-				return;
-			}
-			if (message.method === 'members') {
-				message.members.forEach(connect);
-				return;
-			}
-			if (message.method === 'reply') {
-				var id = message.id;
-
-				if (callbacks[id]) {
-					callbacks[id](message.error && new Error(message.error), message.data);
-				}
-				return;
-			}
-			that.emit('message', message.from, message.data, !id ? noop : function(err, value) {
-				// TODO: add writable checks
-				socket.send({method:'reply', id:id, error:(err && err.toString()), data:value});
+		types.connect = function(message) {
+			onconnect(message.from, socket);
+		};
+		types.multiplex = function(message) {
+			message.channels.forEach(function(channel) {
+				onmultiplex(channel).add(message.from, socket);							
 			});
-		});	
+		};
+		types.list = function(message) {
+			message.members.forEach(connect);
+		};
+		types.callback = function(message) {
+			(callbacks[message.id] || noop)(message.error && new Error(message.error), message.data);
+		};
+		types.message = function(message) {
+			var emitter = message.channel ? onmultiplex(message.channel) : that;
+
+			emitter.emit('message', message.from, message.data, !message.id ? noop : function(err, value) {
+				socket.send({type:'callback', id:message.id, data:value, err:(err && err.message)});
+			});
+		};
+
+		socket.on('message', function(message) {
+			types[message.type || 'message'](message);
+		});
 	};
 
-	var connect = function(destination, pathname) {
-		if (members[destination] || destination === address) {
-			return;
+	var broadcast = function(to, message) {
+		if (!message) {
+			message = to;
+			to = Object.keys(members);
+		}
+		to.forEach(function(i) {
+			members[i].send(message);
+		});
+	};
+	var send = function(to, message, callback) {
+		if (Array.isArray(to)) {
+			to.forEach(function(destination) {
+				send(destination, message);
+			});
+			return true;
+		}
+		if (!members[to]) {
+			return false;
 		}
 
-		var socket = sockets.connect(destination);
+		message.from = address;
 
-		socket.send({method:'connect', from:address});
-
-		onconnect(destination, socket);
-		onsocket(socket);
-	};
-	var list = function() {
-		return Object.keys(members);
-	};
-	var send = function(destination, message, callback) {
 		if (callback) {
 			var id = message.id = common.gensym();
-
-			callbacks[id] = function(err, message) {
+			
+			callbacks[id] = function(err, value) {
 				delete callbacks[id];
-				callback(err, message);
+				callback(err, value);
 			};
 		}
 
-		members[destination].send(message);
+		members[to].send(message);
+		return true;
 	};
-	
-	that.nodes = list;
-	that.send = function(destination, message, callback) {		
-		if (!message) {
-			message = {from:address, data:destination};
-
-			list().forEach(function(node) {
-				send(node, message);
-			});
+	var connect = function(destination) {
+		if (members[destination] || destination === address) {
 			return;
 		}
-		send(destination, {from:address, data:message}, callback);
+		var socket = sockets.connect(destination);
+
+		socket.send({type:'connect', from:address});
+		syncMultiplex(socket);
+
+		onconnect(destination, socket);
+		onsocket(socket);
 	};
 
 	common.step([
@@ -139,10 +181,10 @@ exports.connect = function(announce) {
 			listen(onsocket, next);
 		},
 		function(port) {
-			address = 'json://'+networkAddress()+':'+port;
+			that.address = address = 'json://'+networkAddress+':'+port;
+			that.emit('ready', that.address);
 
-			that.address = address;
-			that.emit('ready', address);
+			onaddress.put(); // fulfill the future
 
 			if (announce === address) {
 				return;
@@ -152,6 +194,43 @@ exports.connect = function(announce) {
 	], function(err) {
 		that.emit('error', err);
 	});
+
+	that.nodes = function() {
+		return Object.keys(members);
+	};
+	that.send = function(to, message, callback) {
+		if (!message) {
+			message = to;
+			to = that.nodes();
+		}
+		return send(to, {data:message}, callback);
+	};
+	that.multiplex = function(channel) {
+		var multiplex = onmultiplex(''+channel);
+
+		if (multiplex.joined) {
+			return multiplex;
+		}
+
+		multiplex.joined = true;
+
+		onaddress.get(function() {
+			multiplex.address = address;
+			broadcast({type:'multiplex', from:address, channels:[multiplex.channel]});
+
+			multiplex.emit('ready');
+		});
+
+		multiplex.send = function(to, message, callback) {
+			if (!message) {
+				message = to;
+				to = multiplex.nodes();
+			}
+			send(to, {channel:multiplex.channel, data:message}, callback);
+		};
+
+		return multiplex;
+	};
 
 	return that;
 };
