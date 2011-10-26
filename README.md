@@ -19,7 +19,7 @@ hub.send('json://another_member', {hello:'world'});
 
 ```
 
-the upcoming version will also allow you to multiplex messages to support multiple apps on the same hub
+You can also multiplex messages to support multiple apps on the same hub
 
 ``` js
 var hub = require('p2p-hub').connect('json://address_to_a_member');
