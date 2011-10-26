@@ -228,6 +228,7 @@ exports.connect = function(announce) {
 			}
 			send(to, {channel:multiplex.channel, data:message}, callback);
 		};
+		multiplex.multiplex = that.multiplex;
 
 		return multiplex;
 	};
