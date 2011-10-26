@@ -1,5 +1,7 @@
 # p2p-hub
 
+*OBS p2p-hub is build for v.6 so you'll need to use v.5 at the moment*
+
 a super simple p2p hub that allows you to send json messages between computers
 
 ``` js
