@@ -1,6 +1,6 @@
 {
  "name":"p2p-hub",
- "version":"0.2.1",
+ "version":"0.2.3",
  "description":"A simple hub for communicating p2p between processes or machines",
  "author": "Mathias Buus Madsen <mathiasbuus@gmail.com>",
  "main":"./index.js"

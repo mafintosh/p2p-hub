@@ -6,7 +6,7 @@ var noop = function() {};
 var PORT = 10547;
 
 var networkAddress = function() {
-	var ip = require('os').getNetworkInterfaces();
+	var ip = require('os').networkInterfaces();
 
 	for (var i in ip) {
 		var cand = ip[i].filter(function(item) {
