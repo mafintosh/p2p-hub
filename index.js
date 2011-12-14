@@ -21,7 +21,7 @@ var networkAddress = function() {
 }();
 var listen = function(onsocket, callback) {
 	var onport = function(port) {
-		sockets.listen({port:port, reconnect:true}, onsocket, function(err) {
+		sockets.listen({port:port}, onsocket, function(err) {
 			if (err) {
 				onport(port+1);
 				return;
