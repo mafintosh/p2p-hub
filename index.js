@@ -21,7 +21,7 @@ var networkAddress = function() {
 }();
 var listen = function(onsocket, callback) {
 	var onport = function(port) {
-		sockets.listen(port, onsocket, function(err) {
+		sockets.listen({port:port, reconnect:true}, onsocket, function(err) {
 			if (err) {
 				onport(port+1);
 				return;
@@ -167,7 +167,8 @@ exports.connect = function(announce) {
 		if (members[destination] || destination === address) {
 			return;
 		}
-		var socket = sockets.connect(destination);
+
+		var socket = sockets.connect(destination+'/'+encodeURIComponent(address));
 
 		socket.send({type:'connect', from:address});
 		syncMultiplex(socket);
