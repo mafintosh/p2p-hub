@@ -83,6 +83,7 @@ exports.connect = function(announce) {
 	var that = common.createEmitter('that');
 	var members = {};
 	var channels = {};
+	var joined = {};
 	var callbacks = {};
 	var address;
 
@@ -91,7 +92,7 @@ exports.connect = function(announce) {
 	var onaddress = common.future();
 
 	var syncMultiplex = function(socket) {
-		socket.send({type:'multiplex', from:address, channels:Object.keys(channels)});	
+		socket.send({type:'multiplex', from:address, channels:Object.keys(joined)});	
 	};
 
 	var onmultiplex = function(channel) {
@@ -219,7 +220,7 @@ exports.connect = function(announce) {
 			return multiplex;
 		}
 
-		multiplex.joined = true;
+		multiplex.joined = joined[''+channel] = true;
 
 		onaddress.get(function() {
 			multiplex.address = address;
