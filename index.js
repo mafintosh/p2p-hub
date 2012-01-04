@@ -19,17 +19,23 @@ var networkAddress = function() {
 	}
 	return '127.0.0.1';
 }();
+var freePort = function(offset, callback) {
+	var sock = require('dgram').createSocket('udp4');	
+
+	sock.on('error', function() {
+		freePort(offset+1, callback);
+	});
+	sock.on('listening', function() {
+		callback(null, offset);
+	});
+	sock.bind(offset);
+};
 var listen = function(onsocket, callback) {
-	var onport = function(port) {
-		sockets.listen({port:port}, onsocket, function(err) {
-			if (err) {
-				onport(port+1);
-				return;
-			}
+	freePort(PORT, common.fork(callback, function(port) {
+		sockets.listen({port:port}, onsocket, function() {
 			callback(null, port);
 		});
-	};
-	onport(PORT);
+	}));
 };
 var normalizeAddress = function(address) {
 	address = address || networkAddress;
