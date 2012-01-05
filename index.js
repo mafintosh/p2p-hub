@@ -175,7 +175,7 @@ exports.connect = function(announce) {
 			return;
 		}
 
-		var socket = sockets.connect(destination+'/'+encodeURIComponent(address));
+		var socket = sockets.connect(destination);
 
 		socket.send({type:'connect', from:address});
 		syncMultiplex(socket);
