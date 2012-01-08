@@ -19,6 +19,24 @@ var networkAddress = function() {
 	}
 	return '127.0.0.1';
 }();
+var online = function(destination, callback) {
+	var timeout = 100;
+
+	var action = function() {
+		var socket = sockets.connect(destination);
+
+		socket.on('close', function() {
+			setTimeout(action, timeout = 2*timeout);
+		});
+		
+		socket.on('open', function() {
+			socket.destroy();
+			callback();
+		});
+	};
+
+	action();
+};
 var freePort = function(offset, callback) {
 	var sock = require('dgram').createSocket('udp4');	
 
@@ -182,6 +200,16 @@ exports.connect = function(announce) {
 
 		onconnect(destination, socket);
 		onsocket(socket);
+
+		if (destination !== announce) {
+			return;
+		}
+
+		socket.on('close', function() {
+			online(announce, function() {
+				connect(announce);
+			});
+		})
 	};
 
 	common.step([
