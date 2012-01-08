@@ -22,15 +22,17 @@ var networkAddress = function() {
 var online = function(destination, callback) {
 	var timeout = 100;
 
+	var onclose = function() {
+		setTimeout(action, timeout = 2*timeout);		
+	};
 	var action = function() {
 		var socket = sockets.connect(destination);
 
-		socket.on('close', function() {
-			setTimeout(action, timeout = 2*timeout);
-		});
-		
+		socket.on('close', onclose);
 		socket.on('open', function() {
+			socket.removeListener('close', onclose);
 			socket.destroy();
+			
 			callback();
 		});
 	};
