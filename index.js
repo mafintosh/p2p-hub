@@ -1,5 +1,6 @@
 var sockets = require('message-sockets');
 var common = require('common');
+var dns = require('dns');
 
 var noop = function() {};
 
@@ -100,14 +101,16 @@ var createMultiplex = function(channel) {
 };
 
 exports.connect = function(announce) {
+	if (announce && typeof announce === 'object' && typeof announce.send === 'function') {
+		return announce;
+	}
+
 	var that = common.createEmitter('that');
 	var members = {};
 	var channels = {};
 	var joined = {};
 	var callbacks = {};
 	var address;
-
-	announce = normalizeAddress(announce);
 
 	var onaddress = common.future();
 
@@ -216,6 +219,10 @@ exports.connect = function(announce) {
 
 	common.step([
 		function(next) {
+			dns.lookup(announce || networkAddress, next);	
+		},
+		function(ip, next) {
+			announce = normalizeAddress(ip);
 			listen(onsocket, next);
 		},
 		function(port) {
