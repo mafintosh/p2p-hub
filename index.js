@@ -245,6 +245,9 @@ exports.connect = function(announce) {
 	that.nodes = function() {
 		return Object.keys(members);
 	};
+	that.ready = function(callback) {
+		onaddress.get(callback);
+	};
 	that.send = function(to, message, callback) {
 		if (!message) {
 			message = to;
@@ -275,6 +278,10 @@ exports.connect = function(announce) {
 			}
 			send(to, {channel:multiplex.channel, data:message}, callback);
 		};
+		multiplex.ready = function(callback) {
+			onaddress.get(callback);
+		};
+
 		multiplex.multiplex = that.multiplex;
 
 		return multiplex;
