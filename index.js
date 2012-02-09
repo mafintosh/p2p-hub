@@ -40,22 +40,24 @@ var online = function(destination, callback) {
 
 	action();
 };
-var freePort = function(offset, callback) {
-	var sock = require('dgram').createSocket('udp4');	
+var freeServer = function(port, callback) {
+	var server = require('http').createServer();
+	var tmp = process.env;
 
-	sock.on('error', function() {
-		freePort(offset+1, callback);
+	server.on('error', function() {
+		freeServer(port+1, callback);
 	});
-	sock.on('listening', function() {
-		callback(null, offset);
+
+	process.env = {}; // HACK! this way we avoid being clustered
+	server.listen(port, function() {
+		callback(null, server);
 	});
-	sock.bind(offset);
+	process.env = tmp;
 };
 var listen = function(onsocket, callback) {
-	freePort(PORT, common.fork(callback, function(port) {
-		sockets.listen({port:port}, onsocket, function() {
-			callback(null, port);
-		});
+	freeServer(PORT, common.fork(callback, function(server) {
+		sockets.listen(server, onsocket);
+		callback(null, server.address().port);
 	}));
 };
 var normalizeAddress = function(address) {
