@@ -1,7 +1,5 @@
 # p2p-hub
 
-*OBS p2p-hub is build for node v.6*
-
 a super simple p2p hub that allows you to send json messages between computers
 
 ``` js
@@ -18,6 +16,8 @@ hub.on('message', function(from, message) {
 	console.log(from, 'says', message);
 });
 hub.send('json://another_member', {hello:'world'});
+
+var all = hub.nodes(); // get all current members
 
 ```
 
