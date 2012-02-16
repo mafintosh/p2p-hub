@@ -7,7 +7,14 @@ var hub = require('p2p-hub').connect('json://address_to_a_member');
 
 hub.on('connect', function(from) {
 	console.log(from, 'connected');
-	console.log('all nodes:', hub.nodes());
+	
+	// let's print all current nodes
+	var all = hub.nodes();
+	
+	console.log('all nodes:', all);
+	
+	// let's say hello to him	
+	hub.send(from, {hello:'world'});
 });
 hub.on('disconnect', function(from) {
 	console.log(from, 'disconnected');
@@ -15,10 +22,8 @@ hub.on('disconnect', function(from) {
 hub.on('message', function(from, message) {
 	console.log(from, 'says', message);
 });
+
 hub.send('json://another_member', {hello:'world'});
-
-var all = hub.nodes(); // get all current members
-
 ```
 
 You can also multiplex messages to support multiple apps on the same hub
