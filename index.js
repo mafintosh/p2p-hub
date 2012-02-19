@@ -1,6 +1,7 @@
 var sockets = require('message-sockets');
 var common = require('common');
 var dns = require('dns');
+var peers = require('./lib/peer');
 
 var noop = function() {};
 
@@ -20,47 +21,7 @@ var networkAddress = function() {
 	}
 	return '127.0.0.1';
 }();
-var online = function(destination, callback) {
-	var timeout = 100;
-
-	var onclose = function() {
-		setTimeout(action, timeout = 2*timeout);		
-	};
-	var action = function() {
-		var socket = sockets.connect(destination);
-
-		socket.on('close', onclose);
-		socket.on('open', function() {
-			socket.removeListener('close', onclose);
-			socket.destroy();
-			
-			callback();
-		});
-	};
-
-	action();
-};
-var freeServer = function(port, callback) {
-	var server = require('http').createServer();
-	var tmp = process.env;
-
-	server.on('error', function() {
-		freeServer(port+1, callback);
-	});
-
-	process.env = {}; // HACK! this way we avoid being clustered
-	server.listen(port, function() {
-		callback(null, server);
-	});
-	process.env = tmp;
-};
-var listen = function(onsocket, callback) {
-	freeServer(PORT, common.fork(callback, function(server) {
-		sockets.listen(server, onsocket);
-		callback(null, server.address().port);
-	}));
-};
-var normalizeAddress = function(address) {
+var normalize = function(address) {
 	address = address || networkAddress;
 
 	if (!(/\w+:\/\//.test(address))) {
@@ -71,221 +32,196 @@ var normalizeAddress = function(address) {
 	}
 	return address;
 };
-var addSocket = function(emitter, map, from, socket) {
-	if (map[from]) {
-		return;
-	}
-	map[from] = socket;
+var listen = function(onsocket, callback) {
+	var loop = function(port) {
+		var server = require('http').createServer();
+		var tmp = process.env;
 
-	socket.on('close', function() {
-		delete map[from];
-		emitter.emit('disconnect', from);
-	});
+		process.env = {}; // HACK! this way we avoid being clustered
 
-	emitter.emit('connect', from);
-};
-
-var createMultiplex = function(channel) {
-	var that = common.createEmitter();
-	var members = {};
-
-	that.joined = false;
-	that.channel = channel;
-
-	that.add = function(from, socket) {
-		addSocket(that, members, from, socket);
-	};
-	that.nodes = function() {
-		return Object.keys(members);	
-	};
-
-	return that;	
-};
-
-exports.connect = function(announce) {
-	if (announce && typeof announce === 'object' && typeof announce.send === 'function') {
-		return announce;
-	}
-
-	var that = common.createEmitter('that');
-	var members = {};
-	var channels = {};
-	var joined = {};
-	var callbacks = {};
-	var address;
-
-	var onaddress = common.future();
-
-	var syncMultiplex = function(socket) {
-		socket.send({type:'multiplex', from:address, channels:Object.keys(joined)});	
-	};
-
-	var onmultiplex = function(channel) {
-		return channels[channel] = channels[channel] || createMultiplex(channel);		
-	};
-	var onconnect = function(from, socket) {
-		addSocket(that, members, from, socket);
-
-		socket.send({type:'list', members:that.nodes()});
-		syncMultiplex(socket);
-
-		return socket;
-	};
-	var onsocket = function(socket) {
-		var types = {};
-
-		types.connect = function(message) {
-			onconnect(message.from, socket);
-		};
-		types.multiplex = function(message) {
-			message.channels.forEach(function(channel) {
-				onmultiplex(channel).add(message.from, socket);							
-			});
-		};
-		types.list = function(message) {
-			message.members.forEach(connect);
-		};
-		types.callback = function(message) {
-			(callbacks[message.id] || noop)(message.error && new Error(message.error), message.data);
-		};
-		types.message = function(message) {
-			var emitter = message.channel ? onmultiplex(message.channel) : that;
-
-			emitter.emit('message', message.from, message.data, !message.id ? noop : function(err, value) {
-				socket.send({type:'callback', id:message.id, data:value, err:(err && err.message)});
-			});
-		};
-
-		socket.on('message', function(message) {
-			types[message.type || 'message'](message);
+		server.on('error', function() {
+			loop(port+1);
 		});
-	};
-
-	var broadcast = function(to, message) {
-		if (!message) {
-			message = to;
-			to = Object.keys(members);
-		}
-		to.forEach(function(i) {
-			members[i].send(message);
+		server.listen(port, function() {
+			sockets.listen(server, onsocket);
+			callback(null, port);
 		});
+
+		process.env = tmp;
 	};
-	var send = function(to, message, callback) {
-		if (Array.isArray(to)) {
-			to.forEach(function(destination) {
-				send(destination, message);
+
+	loop(PORT);
+};
+var createHub = function(peer) {
+	var hub = common.createEmitter();
+	var multiplex = {};
+	var onready = common.future();
+
+	var sender = function(hub) {
+		var send = function(node, message, callback) {
+			if (arguments.length === 1) {
+				message = node;
+				hub.nodes().forEach(function(node) {
+					send(node, message);
+				});
+				return;
+			}
+			if (!hub.all[node]) {
+				(callback || noop)(new Error('node does not exist'));
+				return;
+			}
+
+			hub.all[node].send({from:hub.address, channel:hub.channel, data:message}, callback);
+		};
+
+		return send;
+	};
+	var multiplexer = function(name) {
+		if (multiplex[name]) {
+			return multiplex[name];
+		}
+
+		var that = multiplex[name] = common.createEmitter();
+
+		that.all = {};
+		that.channel = name;
+		that.send = sender(that);
+
+		that.nodes = function() {
+			return Object.keys(that.all);
+		};
+
+		hub.ready(function() {
+			that.address = hub.address;
+			that.emit('ready');
+		});
+
+		that.ready = hub.ready;
+		that.multiplex = hub.multiplex;
+
+		var onnode = function(node) {
+			var peer = hub.all[node];
+
+			peer.multiplex(name, function(_, joined) {
+				if (!joined || that.all[node]) {
+					return;
+				}
+
+				that.all[node] = peer;
+				that.emit('connect', node);
 			});
-			return true;
-		}
-		if (!members[to]) {
-			return false;
-		}
+			peer.on('multiplex', function(channel) {
+				if (channel !== name || that.all[node]) {
+					return;
+				}
 
-		message.from = address;
+				that.all[node] = peer;
+				that.emit('connect', node);
+			});
+			peer.on('disconnect', function() {
+				if (!that.all[node]) {
+					return;
+				}
 
-		if (callback) {
-			var id = message.id = common.gensym();
-			
-			callbacks[id] = function(err, value) {
-				delete callbacks[id];
-				callback(err, value);
-			};
-		}
+				delete that.all[node];
+				that.emit('disconnect', node);
+			});
+		};
 
-		members[to].send(message);
-		return true;
+		hub.nodes().forEach(onnode);
+		hub.on('connect', onnode);
+
+		return that;
 	};
-	var connect = function(destination) {
-		if (members[destination] || destination === address) {
+
+	hub.all = {};
+	hub.send = sender(hub);
+
+	hub.nodes = function() {
+		return Object.keys(hub.all);	
+	};
+	hub.multiplex = function(name) {
+		return multiplexer(name);
+	};
+	hub.ready = function(callback) {
+		onready.get(callback);
+	};
+
+	var connect = function(socket) {
+		if (typeof socket === 'string' && (hub.all[socket] || socket === hub.address)) {
 			return;
 		}
-
-		var socket = sockets.connect(destination);
-
-		socket.send({type:'connect', from:address});
-		syncMultiplex(socket);
-
-		onconnect(destination, socket);
-		onsocket(socket);
-
-		if (destination !== announce) {
-			return;
+		if (typeof socket === 'string') {
+			socket = hub.all[socket] = peers.create(hub, socket);
+		} else {
+			socket = peers.create(hub, socket);		
 		}
 
-		socket.on('close', function() {
-			online(announce, function() {
-				connect(announce);
+		socket.ready(function(from) {
+			hub.all[from] = socket;
+			hub.emit('connect', from);
+
+			if (from !== peer) {
+				return;
+			}
+
+			socket.on('close', function() {
+				peers.whenOnline(peer, function() {
+					connect(peer);
+				});
 			});
-		})
+		});
+
+		socket.on('message', function(message, callback) {
+			var emitter = (message.channel && multiplex[message.channel]) || hub;
+
+			emitter.emit('message', message.from, message.data, callback);
+		});
+		socket.on('disconnect', function(from) {
+			delete hub.all[from];
+			hub.emit('disconnect', from);
+		});
+		socket.on('nodes', function(nodes) {
+			nodes.forEach(connect);
+		});
 	};
 
 	common.step([
 		function(next) {
-			dns.lookup(announce || networkAddress, next);	
+			dns.lookup(peer || networkAddress, next);
 		},
-		function(ip, next) {
-			announce = normalizeAddress(ip);
-			listen(onsocket, next);
+		function(result, next) {
+			peer = normalize(result);
+			listen(connect, next);
 		},
 		function(port) {
-			that.address = address = 'json://'+networkAddress+':'+port;
-			that.emit('ready', that.address);
-
-			onaddress.put(); // fulfill the future
-
-			if (announce === address) {
-				return;
-			}
-			connect(announce);
+			hub.address = 'json://'+networkAddress+':'+port;
+			connect(peer);
+			onready.put();
+			hub.emit('ready');
 		}
-	], function(err) {
-		that.emit('error', err);
-	});
+	]);
 
-	that.nodes = function() {
-		return Object.keys(members);
-	};
-	that.ready = function(callback) {
-		onaddress.get(callback);
-	};
-	that.send = function(to, message, callback) {
-		if (!message) {
-			message = to;
-			to = that.nodes();
-		}
-		return send(to, {data:message}, callback);
-	};
-	that.multiplex = function(channel) {
-		var multiplex = onmultiplex(''+channel);
+	return hub;
+};
+exports.connect = function(peer, options) {
+	var hub;
+	var notPeer = peer && typeof peer === 'object';
 
-		if (multiplex.joined) {
-			return multiplex;
-		}
+	if (notPeer && typeof peer.send === 'function') {
+		hub = peer;
+	}
+	if (notPeer && typeof peer.send !== 'function') {
+		options = peer;
+		peer = undefined;
+	}
 
-		multiplex.joined = joined[''+channel] = true;
+	options = options || {};
+	hub = hub || createHub(peer);
 
-		onaddress.get(function() {
-			multiplex.address = address;
-			broadcast({type:'multiplex', from:address, channels:[multiplex.channel]});
+	if (options.channel) {
+		return hub.multiplex(options.channel);
+	}
 
-			multiplex.emit('ready');
-		});
-
-		multiplex.send = function(to, message, callback) {
-			if (!message) {
-				message = to;
-				to = multiplex.nodes();
-			}
-			send(to, {channel:multiplex.channel, data:message}, callback);
-		};
-		multiplex.ready = function(callback) {
-			onaddress.get(callback);
-		};
-
-		multiplex.multiplex = that.multiplex;
-
-		return multiplex;
-	};
-
-	return that;
+	return hub;
 };
