@@ -66,6 +66,10 @@ var createHub = function(peer) {
 				});
 				return;
 			}
+			if (node === hub.address) {
+				hub.emit('message', node, message, callback || noop);
+				return;
+			}
 			if (!hub.all[node]) {
 				(callback || noop)(new Error('node does not exist'));
 				return;
