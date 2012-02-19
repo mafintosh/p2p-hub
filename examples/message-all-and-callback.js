@@ -6,7 +6,7 @@ if (cluster.isMaster) {
 	}
 }
 
-var hub = require('./index').connect();
+var hub = require('../index').connect();
 
 hub.on('connect', function(from) {
 	console.log(hub.address+'> nodes: '+hub.nodes().join(', ')+' (connect)');
