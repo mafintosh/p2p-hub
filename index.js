@@ -197,7 +197,7 @@ var createHub = function(peer) {
 		function(port) {
 			hub.address = 'json://'+networkAddress+':'+port;
 			connect(peer);
-			onready.put();
+			onready.put(hub.address);
 			hub.emit('ready');
 		}
 	]);
